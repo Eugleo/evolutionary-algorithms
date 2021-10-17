@@ -171,7 +171,7 @@ run_experiment(
     n = 10,
 )
 
-# ALternating
+# Alternating
 run_experiment(
     individual_size = 25,
     population_size = 50,

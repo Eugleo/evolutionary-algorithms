@@ -1,0 +1,9 @@
+authors = ["Evžen Wybitul <wybitul.evzen@gmail.com>"]
+name = "eva"
+uuid = "5e01b447-103d-45f6-87bc-c76732dd7ea7"
+version = "0.1.0"
+
+[deps]
+JuliaFormatter = "98e50ef6-434e-11e9-1051-2b60c6c9e899"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
