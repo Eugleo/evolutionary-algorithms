@@ -30,42 +30,51 @@ function compute_statistics(results)
 end
 
 function encode_parameters(; parameters...)
-    ["$(String(name)[1])=$(value)" for (name, value) in pairs(parameters)]
+    [
+        "$(join([s[1] for s in split(String(name), "_")]))=$(value)" for
+        (name, value) in pairs(parameters)
+    ]
 
 end
 
-function with_serialization(experiment; path_base, parameters...)
-    filename = join(encode_parameters(parameters...), "_") * ".jls"
-    path = joinpath(path_base, filename)
+function with_serialization(experiment; path, configuration)
+    filename = join(encode_parameters(; configuration...), "_") * ".jls"
+    path = joinpath(path, filename)
 
     if isfile(path)
         deserialize(path)
     else
-        result = experiment(parameters...)
+        result = experiment(; configuration...)
         serialize(path, result)
         result
     end
 end
 
-function run_experiments(experiment; description, path_base, cache = true, parameters...)
+function run_experiments(experiment, descriptor; configuration, path, cache = true)
     results = DataFrame()
-    for combination in Base.product(values(parameters)...)
-        config = zip(keys(parameters), combination)
+    for combination in Base.product(values(configuration)...)
+        run_config = zip(keys(configuration), combination)
         if cache
-            result = with_serialization(experiment; path_base, config...)
+            result = with_serialization(experiment; path, configuration = run_config)
         else
-            result = experiment(; config...)
+            result = experiment(; run_config...)
         end
-        insertcols!(result, :configuration => description(; config...))
+        insertcols!(result, :configuration => descriptor(; run_config...))
         append!(results, result)
     end
     results
 end
 
-function plot_experiments(experiment; path_base, description, cache = true, parameters...)
-    results = run_experiments(experiment; path_base, description, cache, parameters...)
-
-    plot(
+function plot_experiments(
+    experiment,
+    descriptor;
+    path,
+    configuration,
+    cache = true,
+    log = false,
+)
+    results = run_experiments(experiment, descriptor; path, cache, configuration)
+    img = plot(
         @subset(
             Utilities.compute_statistics(results),
             :metric .== "objective",
@@ -80,25 +89,9 @@ function plot_experiments(experiment; path_base, description, cache = true, para
         Geom.ribbon,
         Scale.discrete_color(),
         Theme(key_position = :top),
+        log ? Scale.y_log10 : Scale.y_continuous,
     )
-end
-
-
-function with_serialization(experiment; path_base, parameters...)
-    filename = []
-    for (name, value) in pairs(parameters)
-        push!(filename, "$(encode_string(name))=$(value)")
-    end
-
-    path = joinpath(path_base, join(filename, "_") * ".jls")
-
-    if isfile(path)
-        deserialize(path)
-    else
-        result = experiment(parameters...)
-        serialize(path, result)
-        result
-    end
+    results, img
 end
 
 """Implements the evolutionary algorithm
@@ -122,7 +115,7 @@ function evolve(population, pop_size, generation_count, metrics, operators, sele
             append!(scores_log, summarize(generation, evaluations, scores, individual))
         end
 
-        mating_pool = select(population, scores[1], count = pop_size)
+        mating_pool = select(population, scores[1], population_size = pop_size)
         population = mate(mating_pool, operators)
     end
 
