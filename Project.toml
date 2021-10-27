@@ -1,15 +1,5 @@
-name = "eva"
-uuid = "5e01b447-103d-45f6-87bc-c76732dd7ea7"
-authors = ["Evžen Wybitul <wybitul.evzen@gmail.com>"]
-version = "0.1.0"
-
 [deps]
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
-DataFramesMeta = "1313f7d8-7da2-5740-9ea0-a2ca25f37964"
 Gadfly = "c91e804a-d5a3-530f-b6f0-dfbca275c004"
-JuliaFormatter = "98e50ef6-434e-11e9-1051-2b60c6c9e899"
-Memoize = "c03570c3-d221-55d1-a50c-7939bbd78826"
 Pluto = "c3e4b0f8-55cb-11ea-2926-15256bba5781"
-PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
-Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
