@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.16.1
+# v0.16.4
 
 using Markdown
 using InteractiveUtils
@@ -65,8 +65,57 @@ md"""
 
 # ╔═╡ cbe39a0a-45d2-46b8-b5ad-76e1d7252947
 """Roulette wheel selection"""
-function roulette_wheel_selection(population, scores; count)
-    StatsBase.sample(population, StatsBase.Weights(scores), count)
+function roulette_wheel_selection(population, scores; population_size)
+    StatsBase.sample(population, StatsBase.Weights(scores), population_size)
+end
+
+# ╔═╡ 7288f286-cd88-4722-97e0-bb1864230ebf
+population
+
+# ╔═╡ c1c054e6-f4de-4caf-924e-d9de45bc0c4e
+roulette_wheel_selection(population, [3, 1, 0, 0]; population_size = 4)
+
+# ╔═╡ 2ae0395b-a29f-4f8a-ad14-be9049d45f16
+function make_tournament_selection(; tournament_size, p)
+	function tournament_selection(population, scores; population_size)
+		new_population = []
+		for _ in 1:population_size
+			sample_indices = sample(1:length(population), tournament_size)
+			indices = sortperm(scores[sample_indices], rev=true)
+			for i in indices
+				if rand() <= p || i == indices[end]
+					append!(new_population, population[sample_indices[i], :])
+					break
+				end
+			end
+		end
+		new_population
+	end
+end
+
+# ╔═╡ 3d9228ad-211f-494d-97bd-fe620bc0b9a7
+population
+
+# ╔═╡ 7fc5a464-572d-4ab4-8b54-14d8571c29bf
+begin
+	t_sel = make_tournament_selection(tournament_size=10, p=0.1)
+	t_sel(population, [0, 1, 2, 3]; population_size=1)
+end
+
+# ╔═╡ 73096df4-1e2f-4a65-8c72-847fc86147ed
+function make_elitism_selection(; elites, select)
+	function elitism_selection(population, scores; population_size)
+		best_indices = partialsortperm(scores, 1:elites, rev=true)
+		best = population[best_indices, :]
+		rest = select(population, scores, population_size = population_size - elites)
+		[best; rest]
+	end
+end
+
+# ╔═╡ f96d96a2-7934-4897-aae4-dca99685e343
+begin
+	e_sel = make_elitism_selection(elites=2, select=roulette_wheel_selection)
+	e_sel(population, [1, 1.1, 1, 1]; population_size=4)
 end
 
 # ╔═╡ 881bb2bb-2d46-41bd-a272-8da9c7be29ee
@@ -158,7 +207,7 @@ function objective(individual, weights; classes)
 end
 
 # ╔═╡ c163971c-a228-42e2-a9f9-c24337ed2138
-function run_experiment(
+function experiment(
     data;
     repeats,
     max_gen,
@@ -166,7 +215,9 @@ function run_experiment(
     cx_prob,
     mut_prob,
     mut_flip_prob,
-    k
+    k,
+	selection,
+	fitness,
 )
 	weights = read_weights(data)
 
@@ -194,7 +245,7 @@ function run_experiment(
 				objective = (ind) -> objective(ind, weights; classes=k),
 			),
 			[cross, mutate],
-			roulette_wheel_selection,
+			selection,
 		)
 
 		insertcols!(scores_log, :run => run)
@@ -202,6 +253,11 @@ function run_experiment(
 	end
 
 	scores_logs
+end
+
+# ╔═╡ aad744e6-b07f-4078-b5bf-0efc30984aaf
+function describe_experiment(; mut_prob, mut_flip_prob, cx_prob, _...)
+	join(Utilities.encode_parameters(; mut_prob, mut_flip_prob, cx_prob), ", ")
 end
 
 # ╔═╡ 7c538d10-9aa2-40e2-ae08-35ee005626df
@@ -220,22 +276,31 @@ end
 # ╔═╡ c944a9eb-7a91-40e3-a8b8-c17ed05d3318
 data = read_weights(EASY)
 
+# ╔═╡ 4cef95ad-391b-4260-8695-d5cbdbd97266
+function run_experiment(; data, configuration...)
+	experiment(data === "easy" ? EASY : HARD; configuration...)
+end
+
 # ╔═╡ bb6e5003-e3a2-4de9-896f-10b549c3f56c
-Utilities.plot_experiments(
-	(; data, kwargs...) -> run_experiment(data === "easy" ? EASY : HARD; kwargs...),
-	path_base = "../out/2-set-partition",
-	description = (; mut_prob, mut_flip_prob, cx_prob, _...) -> 
-		join(Utilities.encode_parameters(; mut_prob, mut_flip_prob, cx_prob), ", "),
-	cache=false,
-	data = ["easy"],
-	repeats=REPEATS,
-	max_gen=MAX_GEN,
-	pop_size=POP_SIZE,
-	cx_prob=CX_PROB,
-	mut_prob=MUT_PROB,
-	mut_flip_prob=MUT_FLIP_PROB,
-	k=K
-)
+begin
+	configuration = (
+		data = ["easy"],
+		repeats=REPEATS,
+		max_gen=MAX_GEN,
+		pop_size=POP_SIZE,
+		cx_prob=CX_PROB,
+		mut_prob=MUT_PROB,
+		mut_flip_prob=MUT_FLIP_PROB,
+		k=K
+	)
+	Utilities.plot_experiments(
+		run_experiment,
+		describe_experiment;
+		path = "../out/2-set-partition",
+		cache=false,
+		configuration
+	)
+end
 
 # ╔═╡ Cell order:
 # ╟─d5c3ead4-7739-40fe-978b-1d2796e29223
@@ -250,6 +315,13 @@ Utilities.plot_experiments(
 # ╠═dcc196c6-ab9c-4b3f-a611-a438744c8697
 # ╟─8e8ec7aa-4685-4b1f-b093-088f11301d61
 # ╠═cbe39a0a-45d2-46b8-b5ad-76e1d7252947
+# ╠═7288f286-cd88-4722-97e0-bb1864230ebf
+# ╠═c1c054e6-f4de-4caf-924e-d9de45bc0c4e
+# ╠═2ae0395b-a29f-4f8a-ad14-be9049d45f16
+# ╠═3d9228ad-211f-494d-97bd-fe620bc0b9a7
+# ╠═7fc5a464-572d-4ab4-8b54-14d8571c29bf
+# ╠═73096df4-1e2f-4a65-8c72-847fc86147ed
+# ╠═f96d96a2-7934-4897-aae4-dca99685e343
 # ╠═881bb2bb-2d46-41bd-a272-8da9c7be29ee
 # ╠═d853c8e6-a0d2-4cf5-89cc-001a76d57a80
 # ╠═546df62f-6e46-4252-a40e-25d7d68cc12c
@@ -266,5 +338,7 @@ Utilities.plot_experiments(
 # ╠═8037a721-2db7-4ed3-877d-7a68667eb9c7
 # ╠═c3770f9c-ce0b-4879-ac94-5e8eab7292f3
 # ╠═c163971c-a228-42e2-a9f9-c24337ed2138
+# ╠═aad744e6-b07f-4078-b5bf-0efc30984aaf
+# ╠═4cef95ad-391b-4260-8695-d5cbdbd97266
 # ╠═7c538d10-9aa2-40e2-ae08-35ee005626df
 # ╠═bb6e5003-e3a2-4de9-896f-10b549c3f56c
