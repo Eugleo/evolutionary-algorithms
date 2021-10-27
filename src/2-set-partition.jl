@@ -20,6 +20,8 @@ begin
 	
     include("./utilities.jl")
     using .Utilities
+	
+	using Gadfly: set_default_plot_size, cm, plot
 end
 
 # ╔═╡ d5c3ead4-7739-40fe-978b-1d2796e29223
@@ -79,8 +81,9 @@ roulette_wheel_selection(population, [3, 1, 0, 0]; population_size = 4)
 function make_tournament_selection(; tournament_size, p)
 	function tournament_selection(population, scores; population_size)
 		new_population = []
+		tournament_size_n = ceil(Int, tournament_size * population_size)
 		for _ in 1:population_size
-			sample_indices = sample(1:length(population), tournament_size)
+			sample_indices = sample(1:length(population), tournament_size_n)
 			indices = sortperm(scores[sample_indices], rev=true)
 			for i in indices
 				if rand() <= p || i == indices[end]
@@ -98,23 +101,25 @@ population
 
 # ╔═╡ 7fc5a464-572d-4ab4-8b54-14d8571c29bf
 begin
-	t_sel = make_tournament_selection(tournament_size=10, p=0.1)
-	t_sel(population, [0, 1, 2, 3]; population_size=1)
+	t_sel = make_tournament_selection(tournament_size=0.5, p=0.1)
+	t_sel(population, [0, 1, 2, 3]; population_size=2)
 end
 
 # ╔═╡ 73096df4-1e2f-4a65-8c72-847fc86147ed
 function make_elitism_selection(; elites, select)
 	function elitism_selection(population, scores; population_size)
-		best_indices = partialsortperm(scores, 1:elites, rev=true)
+		elites_n = ceil(Int, population_size * elites)
+		best_indices = partialsortperm(scores, 1:elites_n, rev=true)
 		best = population[best_indices, :]
-		rest = select(population, scores, population_size = population_size - elites)
+		rest =
+			select(population, scores, population_size = population_size - elites_n)
 		[best; rest]
 	end
 end
 
 # ╔═╡ f96d96a2-7934-4897-aae4-dca99685e343
 begin
-	e_sel = make_elitism_selection(elites=2, select=roulette_wheel_selection)
+	e_sel = make_elitism_selection(elites=0.75, select=roulette_wheel_selection)
 	e_sel(population, [1, 1.1, 1, 1]; population_size=4)
 end
 
@@ -194,7 +199,14 @@ end
 
 # ╔═╡ 8037a721-2db7-4ed3-877d-7a68667eb9c7
 """The fitness function"""
-function fitness(individual, weights; classes)
+function fitness_difference(individual, weights; classes)
+    bw = bin_weights(weights, individual; classes)
+    1 / (maximum(bw) - minimum(bw) + 1)
+end
+
+# ╔═╡ 1e451410-9380-4583-a505-d9eb6f58a908
+"""The fitness function"""
+function fitness_variance(individual, weights; classes)
     bw = bin_weights(weights, individual; classes)
     1 / (Statistics.var(bw) + 1)
 end
@@ -256,19 +268,23 @@ function experiment(
 end
 
 # ╔═╡ aad744e6-b07f-4078-b5bf-0efc30984aaf
-function describe_experiment(; mut_prob, mut_flip_prob, cx_prob, _...)
-	join(Utilities.encode_parameters(; mut_prob, mut_flip_prob, cx_prob), ", ")
+function describe_experiment(; 
+		mut_prob, 
+		mut_flip_prob, 
+		cx_prob, 
+		selection_type,
+		fitness_type,
+		_...)
+	join(
+		Utilities.encode_parameters(; 
+			mut_prob, mut_flip_prob, cx_prob, selection_type, fitness_type
+		), 
+		", "
+	)
 end
 
 # ╔═╡ 7c538d10-9aa2-40e2-ae08-35ee005626df
 begin
-    K = [10] #number of piles
-    POP_SIZE = [100] # population size
-    MAX_GEN = [500] # maximum number of generations
-    MUT_FLIP_PROB = [0.1] # probability of chaninging value during mutation
-	REPEATS = [4]
-	CX_PROB = [1]
-	MUT_PROB = [0.05]
     EASY = "../data/partition-easy.txt"
     HARD = "../data/partition-hard.txt"
 end
@@ -277,29 +293,61 @@ end
 data = read_weights(EASY)
 
 # ╔═╡ 4cef95ad-391b-4260-8695-d5cbdbd97266
-function run_experiment(; data, configuration...)
-	experiment(data === "easy" ? EASY : HARD; configuration...)
+function run_experiment(; data, selection_type, fitness_type, configuration...)
+	if selection_type == "elitism+roulette"
+		selection = make_elitism_selection(
+			elites=0.75, 
+			select=roulette_wheel_selection
+		)
+	elseif selection_type == "elitism+tournament"
+		tournament_selection = make_tournament_selection(
+			tournament_size = 0.15,
+			p = 0.8
+		)
+		selection = make_elitism_selection(
+			elites = 0.05, 
+			select = tournament_selection
+		)
+	else
+		selection = roulette_wheel_selection
+	end
+	
+	fitness = fitness_type == "variance" ? fitness_variance : fitness_difference
+	experiment(data === "easy" ? EASY : HARD; selection, fitness, configuration...)
 end
 
 # ╔═╡ bb6e5003-e3a2-4de9-896f-10b549c3f56c
 begin
+	set_default_plot_size(30cm, 15cm)
 	configuration = (
 		data = ["easy"],
-		repeats=REPEATS,
-		max_gen=MAX_GEN,
-		pop_size=POP_SIZE,
-		cx_prob=CX_PROB,
-		mut_prob=MUT_PROB,
-		mut_flip_prob=MUT_FLIP_PROB,
-		k=K
+		repeats=[10],
+		max_gen=[250] ,
+		pop_size=[100],
+		cx_prob=[0.1, 0.3, 0.5],
+		mut_prob=[0.1, 0.2, 0.25],
+		mut_flip_prob=[0.001, 0.002, 0.003],
+		k=[10],
+		selection_type=["elitism+tournament"],
+		fitness_type=["variance"]
 	)
-	Utilities.plot_experiments(
+	results, img = Utilities.plot_experiments(
 		run_experiment,
 		describe_experiment;
 		path = "../out/2-set-partition",
-		cache=false,
+		cache = true,
+		metric = "objective",
+		ranking = "lowest",
 		configuration
 	)
+	img
+end
+
+# ╔═╡ 5205d3e1-4de4-4219-9350-06f13b2b7606
+@chain results begin
+	@subset(:metric .== "objective")
+	@orderby(:score)
+	@select(:generation, :score, :configuration_raw, :individual)
 end
 
 # ╔═╡ Cell order:
@@ -336,9 +384,11 @@ end
 # ╟─b5e01ac0-8ea2-469d-8faf-be796710d3e7
 # ╠═9122c3d6-a624-4705-8a72-132d715aceec
 # ╠═8037a721-2db7-4ed3-877d-7a68667eb9c7
+# ╠═1e451410-9380-4583-a505-d9eb6f58a908
 # ╠═c3770f9c-ce0b-4879-ac94-5e8eab7292f3
 # ╠═c163971c-a228-42e2-a9f9-c24337ed2138
 # ╠═aad744e6-b07f-4078-b5bf-0efc30984aaf
 # ╠═4cef95ad-391b-4260-8695-d5cbdbd97266
 # ╠═7c538d10-9aa2-40e2-ae08-35ee005626df
 # ╠═bb6e5003-e3a2-4de9-896f-10b549c3f56c
+# ╠═5205d3e1-4de4-4219-9350-06f13b2b7606
