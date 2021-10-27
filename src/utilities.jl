@@ -12,19 +12,19 @@ using Gadfly
 # configuration: konfigurace experimentu
 # run: číslo běhu simulace v daném experimentu
 # generation: číslo generace v rámci daného běhu
-# individual: jedinec worst, best, average, hodnocen podle hodnoty fitness
+# individual: jedinec lowest, highest, average, hodnocen podle hodnoty fitness
 # fitness: hodnota fitness daného jednice
 # objective: hodnota objective daného jedince
 
 function compute_statistics(results)
     @chain results begin
-        groupby([:configuration, :evaluations, :individual, :metric])
+        groupby([:configuration, :evaluations, :ranking, :metric])
         @combine(
             min = Statistics.minimum(:score),
             q1 = quantile(:score, 0.25),
             mean = Statistics.mean(:score),
             q3 = quantile(:score, 0.75),
-            max = Statistics.maximum(:score)
+            max = Statistics.maximum(:score),
         )
     end
 end
@@ -59,7 +59,11 @@ function run_experiments(experiment, descriptor; configuration, path, cache = tr
         else
             result = experiment(; run_config...)
         end
-        insertcols!(result, :configuration => descriptor(; run_config...))
+        insertcols!(
+            result,
+            :configuration => descriptor(; run_config...),
+            :configuration_raw => Ref(collect(run_config)),
+        )
         append!(results, result)
     end
     results
@@ -70,6 +74,8 @@ function plot_experiments(
     descriptor;
     path,
     configuration,
+    metric,
+    ranking,
     cache = true,
     log = false,
 )
@@ -77,8 +83,8 @@ function plot_experiments(
     img = plot(
         @subset(
             Utilities.compute_statistics(results),
-            :metric .== "objective",
-            :individual .== "best"
+            :metric .== metric,
+            :ranking .== ranking
         ),
         x = :evaluations,
         ymin = :q1,
@@ -100,7 +106,8 @@ end
 	- `max_gen`: maximum number of generation
 	- `fitness`: fitness function (takes individual as argument and returns FitObjPair)
 	- `operators`: list of genetic operators (functions of type Population -> Population)
-	- `select`: mating selection (function with three arguments - population, fitness values, number of individuals to select; returning the selected population)"""
+	- `select`: mating selection (function with three arguments - population, fitness values,
+    number of individuals to select; returning the selected population)"""
 function evolve(population, pop_size, generation_count, metrics, operators, select)
     metric_names = keys(metrics)
     evaluations = 0
@@ -111,8 +118,9 @@ function evolve(population, pop_size, generation_count, metrics, operators, sele
         scores = (; zip(metric_names, metric_values)...)
         evaluations += length(population)
 
-        for individual in ["worst", "average", "best"]
-            append!(scores_log, summarize(generation, evaluations, scores, individual))
+        for ranking in ["lowest", "average", "highest"]
+            summary = summarize(generation, population, evaluations, scores, ranking)
+            append!(scores_log, summary)
         end
 
         mating_pool = select(population, scores[1], population_size = pop_size)
@@ -122,24 +130,33 @@ function evolve(population, pop_size, generation_count, metrics, operators, sele
     population, DataFrame(scores_log)
 end
 
-function summarize(generation, evaluations, scores, individual)
-    if individual == "worst"
-        agg = minimum
-    elseif individual == "average"
-        agg = mean
-    elseif individual == "best"
-        agg = maximum
-    end
+function summarize(generation, population, evaluations, scores, ranking)
+    results = []
+    for (metric, values) in pairs(scores)
+        if ranking == "lowest"
+            index = argmin(values)
+            score = values[index]
+            individual = population[index]
+        elseif ranking == "average"
+            score = mean(values)
+            individual = nothing
+        elseif ranking == "highest"
+            index = argmax(values)
+            score = values[index]
+            individual = population[index]
+        end
 
-    [
-        (
+        obs = (
+            metric = String(metric),
             generation = generation,
             evaluations = evaluations,
+            ranking = ranking,
+            score = score,
             individual = individual,
-            metric = String(metric),
-            score = agg(values),
-        ) for (metric, values) in pairs(scores)
-    ]
+        )
+        push!(results, obs)
+    end
+    results
 end
 
 """Applies a list of genetic operators (functions of type Population -> Population) to the population"""
