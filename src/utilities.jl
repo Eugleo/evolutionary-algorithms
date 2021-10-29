@@ -1,12 +1,16 @@
 module Utilities
 
-export compute_statistics, with_serialization
+export compute_statistics, with_serialization, save_plot, save_best
 
 using Statistics
 using DataFrames
 using DataFramesMeta
 using Serialization
 using Gadfly
+
+import Cairo
+import Fontconfig
+import CSV
 
 # Dostane dataframe se sloupci
 # configuration: konfigurace experimentu
@@ -79,10 +83,15 @@ function plot_experiments(
     cache = true,
     log = false,
 )
-    results = run_experiments(experiment, descriptor; path, cache, configuration)
-    img = plot(
+    data = run_experiments(experiment, descriptor; path, cache, configuration)
+    img = plot_data(data; metric, ranking, log)
+    data, img
+end
+
+function plot_data(data; metric, ranking, log = false)
+    plot(
         @subset(
-            Utilities.compute_statistics(results),
+            Utilities.compute_statistics(data),
             :metric .== metric,
             :ranking .== ranking
         ),
@@ -97,7 +106,19 @@ function plot_experiments(
         Theme(key_position = :top),
         log ? Scale.y_log10 : Scale.y_continuous,
     )
-    results, img
+end
+
+function save_plot(img, path, width = 30cm, height = 15cm)
+    draw(PNG(path, width, height), img)
+end
+
+function save_best(data, path)
+    @chain data begin
+        @subset(:metric .== "objective", :ranking .== "lowest", :generation .% 1000 .== 0)
+        @orderby(:generation)
+        @select(:generation, :score, :configuration, :individual)
+        CSV.write(path, _)
+    end
 end
 
 """Implements the evolutionary algorithm

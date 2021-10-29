@@ -21,7 +21,7 @@ begin
     include("./utilities.jl")
     using .Utilities
 	
-	using Gadfly: set_default_plot_size, cm, plot
+	using Gadfly: set_default_plot_size, cm
 end
 
 # ╔═╡ d5c3ead4-7739-40fe-978b-1d2796e29223
@@ -166,6 +166,19 @@ population[1]
 # ╔═╡ 7493dd23-2eb3-466e-aafe-7e9131add024
 flip_mutate(population[1], 0.5, upper=10)
 
+# ╔═╡ 6f019da5-54ec-4479-bf91-03494551157d
+function choose_item(individual, bin_weights, item_weights, compute_weight)
+	bin = sample(Weights(compute_weight(bin_weights)))
+	items = findall(b -> b == bin, individual)
+	
+	item = nothing
+	if length(items) > 0
+		item = sample(items, Weights(compute_weight(item_weights[items])))
+	end
+	
+	bin, item
+end
+
 # ╔═╡ b573446d-b3b1-4655-8062-4d23c02e6073
 """Applies the mutate function (implementing the mutation of a single individual) to the whole population with probability mut_prob)"""
 function mutation(population, mutate, prob)
@@ -197,6 +210,58 @@ function bin_weights(weights, bins; classes)
     bw
 end
 
+# ╔═╡ a7ba4c45-1370-42de-820d-5241944dd06f
+function make_move_mutation(; weights, classes)
+	function mutate(individual)
+		heaviest = argmax(bin_weights(weights, individual; classes))
+		index = sample(findall(i -> i == heaviest, individual))
+		individual[index] = sample([i for i in 1:classes if i != heaviest])
+		individual
+	end
+end
+
+# ╔═╡ 6599dd50-4f1b-4687-a709-89cd93030dbb
+begin
+	m = make_move_mutation(weights = [30, 5, 5, 5, 15], classes=10)
+	m([1, 2, 2, 2, 3])
+end
+
+# ╔═╡ 9673d5ea-b99b-4f0d-a579-5bec6946cde2
+choose_item(
+	[1, 2, 2, 2, 3], 
+	bin_weights([30, 5, 5, 5, 15], [1, 2, 2, 2, 3], classes = 10), 
+	[30, 5, 5, 5, 15], 
+	xs -> (xs .+ 1)
+)
+
+# ╔═╡ c2db4609-7391-458d-b8ba-fc5f62bdc110
+function make_exchange_mutation(; weights, classes)
+	function mutate(individual)
+		bws = bin_weights(weights, individual; classes)
+		
+		heavy_bin, heavy_item = 
+			choose_item(individual, bws, weights, xs -> xs .+ 1)
+		light_bin, light_item = 
+			choose_item(individual, bws, weights, xs -> 1 ./ (xs .+ 1))
+		
+		if !isnothing(heavy_item)
+			individual[heavy_item] = light_bin
+		end
+		
+		if !isnothing(light_item)
+			individual[light_item] = heavy_bin
+		end
+		
+		individual
+	end
+end
+
+# ╔═╡ bc5986f6-5ace-4b9c-a3b0-2f13c06c1e51
+begin
+	me = make_exchange_mutation(weights = [30, 5, 5, 5, 15], classes=10)
+	me([1, 2, 2, 2, 3])
+end
+
 # ╔═╡ 8037a721-2db7-4ed3-877d-7a68667eb9c7
 """The fitness function"""
 function fitness_difference(individual, weights; classes)
@@ -226,20 +291,14 @@ function experiment(
     pop_size,
     cx_prob,
     mut_prob,
-    mut_flip_prob,
     k,
 	selection,
 	fitness,
+	mutate_individual
 )
 	weights = read_weights(data)
-
-	cross = population -> 
-		crossover(population, one_pt_crossover, cx_prob)
-	mutate = population ->
-		mutation(
-			population, 
-			(ind) -> flip_mutate(ind, mut_flip_prob, upper=k), mut_prob
-		)
+	cross = population -> crossover(population, one_pt_crossover, cx_prob)
+	mutate = population -> mutation(population, mutate_individual, mut_prob)
 
 	scores_logs = DataFrame()
 	for run = 1:repeats
@@ -270,14 +329,14 @@ end
 # ╔═╡ aad744e6-b07f-4078-b5bf-0efc30984aaf
 function describe_experiment(; 
 		mut_prob, 
-		mut_flip_prob, 
 		cx_prob, 
 		selection_type,
 		fitness_type,
+		mutation_type,
 		_...)
 	join(
 		Utilities.encode_parameters(; 
-			mut_prob, mut_flip_prob, cx_prob, selection_type, fitness_type
+			mut_prob, mutation_type, cx_prob, selection_type, fitness_type
 		), 
 		", "
 	)
@@ -293,16 +352,24 @@ end
 data = read_weights(EASY)
 
 # ╔═╡ 4cef95ad-391b-4260-8695-d5cbdbd97266
-function run_experiment(; data, selection_type, fitness_type, configuration...)
+function run_experiment(; 
+		data, 
+		selection_type, 
+		fitness_type, 
+		mutation_type,
+		k,
+		configuration...
+	)
+	
 	if selection_type == "elitism+roulette"
 		selection = make_elitism_selection(
-			elites=0.75, 
+			elites=0.05, 
 			select=roulette_wheel_selection
 		)
 	elseif selection_type == "elitism+tournament"
 		tournament_selection = make_tournament_selection(
-			tournament_size = 0.15,
-			p = 0.8
+			tournament_size = 0.2,
+			p = 0.75
 		)
 		selection = make_elitism_selection(
 			elites = 0.05, 
@@ -313,41 +380,60 @@ function run_experiment(; data, selection_type, fitness_type, configuration...)
 	end
 	
 	fitness = fitness_type == "variance" ? fitness_variance : fitness_difference
-	experiment(data === "easy" ? EASY : HARD; selection, fitness, configuration...)
+	
+	weights = read_weights(data)
+	if mutation_type == "original"
+		mutate_individual = (ind) -> flip_mutate(ind, 0.004, upper = k)
+	elseif mutation_type == "move"
+		mutate_individual = make_move_mutation(classes = k; weights)
+	elseif mutation_type == "exchange"
+		mutate_individual = make_exchange_mutation(classes = k; weights)
+		
+	end
+	
+	dataset = data === "easy" ? EASY : HARD
+	
+	experiment(dataset; selection, fitness, mutate_individual, k, configuration...)
 end
 
 # ╔═╡ bb6e5003-e3a2-4de9-896f-10b549c3f56c
 begin
-	set_default_plot_size(30cm, 15cm)
+	set_default_plot_size(17cm, 12cm)
 	configuration = (
 		data = ["easy"],
-		repeats=[10],
-		max_gen=[250] ,
+		repeats=[12],
+		max_gen=[3000] ,
 		pop_size=[100],
-		cx_prob=[0.1, 0.3, 0.5],
-		mut_prob=[0.1, 0.2, 0.25],
-		mut_flip_prob=[0.001, 0.002, 0.003],
+		cx_prob=[0.1, 0.2],
+		mut_prob=[0.12], # 0.25
+		# mut_flip_prob=[0.004],
 		k=[10],
 		selection_type=["elitism+tournament"],
+		mutation_type=["original", "move", "exchange"],
 		fitness_type=["variance"]
 	)
 	results, img = Utilities.plot_experiments(
 		run_experiment,
 		describe_experiment;
-		path = "../out/2-set-partition",
-		cache = true,
+		path = "../out/3-set-partition",
+		cache=false,
 		metric = "objective",
 		ranking = "lowest",
-		configuration
+		configuration,
+		log=true
 	)
 	img
 end
 
-# ╔═╡ 5205d3e1-4de4-4219-9350-06f13b2b7606
+# ╔═╡ 83b7dfd7-631a-4955-b13c-4055be39bea8
 @chain results begin
 	@subset(:metric .== "objective")
-	@orderby(:score)
-	@select(:generation, :score, :configuration_raw, :individual)
+	@orderby(:score, :generation)
+end
+
+# ╔═╡ 8bbf871d-a5bb-43bd-8f0c-89ad8997e3dc
+if true
+	Utilities.save_plot(img, "../out/3-set-partition/comparison.png", 15cm, 10cm)
 end
 
 # ╔═╡ Cell order:
@@ -377,6 +463,12 @@ end
 # ╠═00181497-2248-477f-987f-7c6f000eb3fd
 # ╠═580a048d-9848-4dac-8e60-6b7686b949be
 # ╠═7493dd23-2eb3-466e-aafe-7e9131add024
+# ╠═a7ba4c45-1370-42de-820d-5241944dd06f
+# ╠═6599dd50-4f1b-4687-a709-89cd93030dbb
+# ╠═6f019da5-54ec-4479-bf91-03494551157d
+# ╠═9673d5ea-b99b-4f0d-a579-5bec6946cde2
+# ╠═c2db4609-7391-458d-b8ba-fc5f62bdc110
+# ╠═bc5986f6-5ace-4b9c-a3b0-2f13c06c1e51
 # ╠═b573446d-b3b1-4655-8062-4d23c02e6073
 # ╠═888210b4-3a45-41b6-b38f-83950f44e256
 # ╠═709fd8a0-969b-49b3-8b67-6d8de51a7a17
@@ -391,4 +483,5 @@ end
 # ╠═4cef95ad-391b-4260-8695-d5cbdbd97266
 # ╠═7c538d10-9aa2-40e2-ae08-35ee005626df
 # ╠═bb6e5003-e3a2-4de9-896f-10b549c3f56c
-# ╠═5205d3e1-4de4-4219-9350-06f13b2b7606
+# ╠═83b7dfd7-631a-4955-b13c-4055be39bea8
+# ╠═8bbf871d-a5bb-43bd-8f0c-89ad8997e3dc
